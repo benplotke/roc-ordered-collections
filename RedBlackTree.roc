@@ -1,16 +1,4 @@
-module [
-    empty,
-    fromList,
-    toList,
-    appendToList,
-    contains,
-    get,
-    min,
-    max,
-    adjust,
-    insert,
-    delete,
-]
+module []
 
 Comparison : [LessThan, Equal, GreaterThan]
 Sort implements
@@ -22,71 +10,99 @@ RBT a : [
     T Color (RBT a) a (RBT a),
 ] where a implements Sort
 
-empty : RBT *
-empty = E
+rbtFromList : List a -> RBT a where a implements Sort
+rbtFromList = \xs ->
+    List.walk xs E rbtInsert
 
-fromList : List a -> RBT a where a implements Sort
-fromList = \xs ->
-    List.walk xs E insert
+rbtToList : RBT a -> List a where a implements Sort
+rbtToList = \t ->
+    rbtAppendToList (List.withCapacity 8) t
 
-toList : RBT a -> List a where a implements Sort
-toList = \t ->
-    appendToList (List.withCapacity 8) t
+rbtWalk : RBT a, state, (state, a -> state) -> state
+rbtWalk = \t, state, f ->
+    when t is
+        E -> state
+        T _ l v r ->
+            lState = rbtWalk l state f
+            vState = f lState v
+            rbtWalk r vState f
 
-appendToList : List a, RBT a -> List a
-appendToList = \xs, t ->
+rbtWalkUntil : RBT a, state, (state, a -> [Continue state, Break state]) -> state
+rbtWalkUntil = \t, state, f ->
+    result = rbtWalkUntilHelper t state f
+    when result is
+        Continue c -> c
+        Break b -> b
+
+rbtWalkUntilHelper : RBT a, state, (state, a -> [Continue state, Break state]) -> [Continue state, Break state]
+rbtWalkUntilHelper = \t, state, f ->
+    when t is
+        E -> Continue state
+        T _ l v r ->
+            lResult = rbtWalkUntilHelper l state f
+            when lResult is
+                Break _ -> lResult
+                Continue lState ->
+                    vResult = f lState v
+                    when vResult is
+                        Break _ -> vResult
+                        Continue vState ->
+                            rbtWalkUntilHelper r vState f
+
+rbtAppendToList : List a, RBT a -> List a
+rbtAppendToList = \xs, t ->
     when t is
         E -> xs
         T _ l v r ->
-            appendToList xs l |> List.append v |> appendToList r
+            rbtAppendToList xs l |> List.append v |> rbtAppendToList r
 
-contains : RBT a, a -> Bool where a implements Sort
-contains = \t, x ->
+rbtContains : RBT a, a -> Bool where a implements Sort
+rbtContains = \t, x ->
     when t is
         E -> Bool.false
         T _ l y r ->
             when compare x y is
-                LessThan -> contains l x
+                LessThan -> rbtContains l x
                 Equal -> Bool.true
-                GreaterThan -> contains r x
+                GreaterThan -> rbtContains r x
 
-get : RBT a, a -> Result a [NotFound] where a implements Sort
-get = \t, x ->
+rbtGet : RBT a, a -> Result a [NotFound] where a implements Sort
+rbtGet = \t, x ->
     when t is
         E -> Err NotFound
         T _ l y r ->
             when compare x y is
-                LessThan -> get l x
+                LessThan -> rbtGet l x
                 Equal -> Ok y
-                GreaterThan -> get r x
+                GreaterThan -> rbtGet r x
 
-min : RBT a -> a where a implements Sort
-min = \t ->
+rbtMin : RBT a -> Result a [EmptyTree] where a implements Sort
+rbtMin = \t ->
     when t is
-        T _ E v _ -> v
-        T _ l _ _ -> min l
-        E -> crash "There is no minimum of the empty tree"
+        T _ E v _ -> Ok v
+        T _ l _ _ -> rbtMin l
+        E -> Err EmptyTree
 
-max : RBT a -> a where a implements Sort
-max = \t ->
+rbtMax : RBT a -> Result a [EmptyTree] where a implements Sort
+rbtMax = \t ->
     when t is
-        T _ _ v E -> v
-        T _ _ _ r -> max r
-        E -> crash "There is no maximum of the empty tree"
+        T _ _ v E -> Ok v
+        T _ _ _ r -> rbtMax r
+        E -> Err EmptyTree
 
 ## Uses e to look up value v and applies function "f" to it. If f of v compares Equal to v, v is replaced by f of v.
 ## This can be useful if Equal is an equivalence relation rather than structural equality.
 ## The use case which motivated this function is that of a SortedMap backed by RedBlackTree. This method allows the
 ## map to have an "adjust" method for updating the value of a key value pair
 ##      adjust : OrderedMap k v, k, (v -> f) -> OrderedMap
-adjust : RBT a, a, (a -> a) -> RBT a where a implements Sort
-adjust = \t, e, f ->
+rbtAdjust : RBT a, a, (a -> a) -> RBT a where a implements Sort
+rbtAdjust = \t, e, f ->
     when t is
         E -> E
         T c l v r ->
             when compare e v is
-                LessThan -> adjust l e f
-                GreaterThan -> adjust r e f
+                LessThan -> rbtAdjust l e f
+                GreaterThan -> rbtAdjust r e f
                 Equal ->
                     v2 = f v
                     if
@@ -96,8 +112,8 @@ adjust = \t, e, f ->
                     else
                         t
 
-insert : RBT a, a -> RBT a where a implements Sort
-insert = \rbt, e ->
+rbtInsert : RBT a, a -> RBT a where a implements Sort
+rbtInsert = \rbt, e ->
     insertHelper rbt e |> blacken
 
 insertHelper : RBT a, a -> RBT a where a implements Sort
@@ -130,8 +146,8 @@ blacken = \t ->
         E -> E
         T _ l v r -> T B l v r
 
-delete : RBT a, a -> RBT a where a implements Sort
-delete = \t, v ->
+rbtDelete : RBT a, a -> RBT a where a implements Sort
+rbtDelete = \t, v ->
     (tp, _) = deleteHelper t v
     blacken tp
 
@@ -188,9 +204,13 @@ deleteHelper = \t, v ->
                     leftDeleteBalance (T c lp w r) needsBal
 
                 Equal ->
-                    wp = min r
-                    (rp, needsBal) = deleteHelper r wp
-                    rightDeleteBalance (T c l wp rp) needsBal
+                    wpResult = rbtMin r
+                    when wpResult is
+                        Ok wp ->
+                            (rp, needsBal) = deleteHelper r wp
+                            rightDeleteBalance (T c l wp rp) needsBal
+
+                        Err EmptyTree -> crash "how could a not empty tree be empty?"
 
                 GreaterThan ->
                     (rp, needsBal) = deleteHelper r v
@@ -228,13 +248,13 @@ rightDeleteBalance = \t, needsBal ->
 
 # ----- Test Code -----
 
-expect contains (fromIs [1, 2, 3]) (iToTn 3)
-expect !(fromIs [1, 2, 3] |> delete (iToTn 2) |> contains (iToTn 2))
-expect (fromIs [2, 1, 3] |> min) == (iToTn 1)
-expect (fromIs [2, 1, 3] |> max) == (iToTn 3)
-expect (fromIs [123, 0, -321] |> toList |> tnsToIs) == [-321, 0, 123]
+expect rbtContains (fromIs [1, 2, 3]) (iToTn 3)
+expect !(fromIs [1, 2, 3] |> rbtDelete (iToTn 2) |> rbtContains (iToTn 2))
+expect (fromIs [2, 1, 3] |> rbtMin) == Ok (iToTn 1)
+expect (fromIs [2, 1, 3] |> rbtMax) == Ok (iToTn 3)
+expect (fromIs [123, 0, -321] |> rbtToList |> tnsToIs) == [-321, 0, 123]
 expect (compare (entry (iToTn 5) "a") (entry (iToTn 5) "b")) == Equal
-expect E |> insert (entry (iToTn 5) "a") |> adjust (entry (iToTn 5) "b") testUpdate |> get (entry (iToTn 5) "b") |> testValue "d"
+expect E |> rbtInsert (entry (iToTn 5) "a") |> rbtAdjust (entry (iToTn 5) "b") testUpdate |> rbtGet (entry (iToTn 5) "b") |> testValue "d"
 
 Entry k v := { key : k, value : v } where k implements Sort
     implements [
@@ -281,7 +301,7 @@ tnsToIs = \xs ->
     List.map xs tnToI
 
 fromIs = \xs ->
-    isToTns xs |> fromList
+    isToTns xs |> rbtFromList
 
 compareTestNum : TestNum, TestNum -> Comparison
 compareTestNum = \@TestNum l, @TestNum r ->
