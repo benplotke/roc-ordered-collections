@@ -156,11 +156,13 @@ contains = \@TreeDict dict, key ->
     entry = @Entry (Key key)
     rbtContains dict.tree entry
 
+## Returns dictionary with the keys and values specified by the input `List`.
 fromList : List (k, v) -> TreeDict k v where a implements Sort
 fromList = \xs ->
     f = \dict, (key, value) -> insert dict key value
     List.walk xs (empty {}) f
 
+## Returns the keys and values of a dictionary as a `List`.
 toList : TreeDict k v -> List (k, v)
 toList = \@TreeDict dict ->
     f = \state, entry ->
@@ -169,6 +171,9 @@ toList = \@TreeDict dict ->
             _ -> crash "How did a Key entry get inserted?"
     rbtWalk dict.tree (List.withCapacity dict.size) f
 
+## Iterate through the keys and values in the dictionary and call the provided function with
+## signature `state, k, v -> state` for each value, with an initial state value provided for the
+## first call.
 walk : TreeDict k v, state, (state, k, v -> state) -> state
 walk = \@TreeDict dict, state, f ->
     f2 = \state2, entry ->
@@ -177,6 +182,7 @@ walk = \@TreeDict dict, state, f ->
             _ -> crash "How did a Key entry get inserted?"
     rbtWalk dict.tree state f2
 
+## Same as `walk`, except you can stop walking early.
 walkUntil : TreeDict k v, state, (state, k, v -> [Continue state, Break state]) -> state
 walkUntil = \@TreeDict dict, state, f ->
     f2 = \state2, entry ->
@@ -185,6 +191,9 @@ walkUntil = \@TreeDict dict, state, f ->
             _ -> crash "How did a Key entry get inserted?"
     rbtWalkUntil dict.tree state f2
 
+## Convert each value in the dictionary to something new, by calling a conversion function on each
+## of them which receives both the key and the old value. Then return a new dictionary containing
+## the same keys and the converted values.
 map : TreeDict k a, (k, a -> b) -> TreeDict k b
 map = \@TreeDict dict, f ->
     f2 = \entry ->
@@ -195,12 +204,18 @@ map = \@TreeDict dict, f ->
         Err InvalidatesTree -> crash "How did updating the value change the key compare?"
         Ok tree2 -> @TreeDict { tree: tree2, size: dict.size }
 
+## Like `map`, except the transformation function wraps the return value in a dictionary. At the
+## end, all the dictionaries get joined together into one dictionary.
+##
+## Other names in other languages for this same method include `concatMap`, `flatMap`, and `bind`.
 joinMap : TreeDict k a, (k, a -> TreeDict k b) -> TreeDict k b
 joinMap = \dict, f ->
     f2 = \(key, value) ->
         f key value |> toList
     dict |> toList |> List.joinMap f2 |> fromList
 
+## Run the given function on each key-value pair of a dictionary, and return a dictionary with
+## just the pairs for which the function returned `Bool.true`.
 keepIf : TreeDict k a, (k, a -> Bool) -> TreeDict k a
 keepIf = \dict, predicate ->
     f = \state, key, value ->
@@ -212,6 +227,8 @@ keepIf = \dict, predicate ->
             state
     walk dict (empty {}) f
 
+## Run the given function on each key-value pair of a dictionary, and return a dictionary with
+## just the pairs for which the function returned `Bool.false`.
 dropIf : TreeDict k a, (k, a -> Bool) -> TreeDict k a
 dropIf = \dict, predicate ->
     f = \state, key, value ->
@@ -223,6 +240,7 @@ dropIf = \dict, predicate ->
             insert state key value
     walk dict (empty {}) f
 
+## Get the key-value pair in the dictionary with the smallest key
 min : TreeDict k v -> Result (k, v) [EmptyTree]
 min = \@TreeDict dict ->
     when rbtMin dict.tree is
@@ -230,6 +248,7 @@ min = \@TreeDict dict ->
         Ok (@Entry (Full key value)) -> Ok (key, value)
         Ok (@Entry _) -> crash "How did a Key entry get inserted?"
 
+## Get the key-value pair in the dictionary with the largest key
 max : TreeDict k v -> Result (k, v) [EmptyTree]
 max = \@TreeDict dict ->
     when rbtMax dict.tree is
