@@ -52,16 +52,32 @@ TreeDict k v := { tree : RBT (Entry k v), size : U64 }
         },
     ]
 
+# To get O(n) equality checking, I transform one of the maps to a list, then walkUntil the other map with an
+# index as the state, comparing the key-value pairs to the pair in the list at the index. Since we stop early
+# if something is not equal, we know the final index only equals the size if the maps are equal
 equal : TreeDict k v, TreeDict k v -> Bool where v implements Bool.Eq
 equal = \@TreeDict a, @TreeDict b ->
-    f = \_, key, value ->
-        if
-            get (@TreeDict b) key == Ok value
-        then
-            Continue Bool.true
-        else
-            Break Bool.false
-    a.size == b.size && walkUntil (@TreeDict a) Bool.true f
+    if
+        a.size == b.size
+    then
+        bList = toList (@TreeDict b)
+        f = \i, entryA ->
+            entryB = List.get bList i
+            when (entryA, entryB) is
+                (@Entry (Full keyA valueA), Ok (keyB, valueB)) ->
+                    if
+                        compare keyA keyB == Equal && valueA == valueB
+                    then
+                        Continue (i + 1)
+                    else
+                        Break i
+
+                (_, Err _) -> crash "Did we not just check the length?"
+                (_, _) -> crash "How did a Key entry get inserted?"
+        endingIndex = rbtWalkUntil a.tree 0 f
+        endingIndex == a.size
+    else
+        Bool.false
 
 ## Creates a new empty `TreeDict`.
 ## Note: The curly braces in the example are required.
@@ -88,6 +104,7 @@ insert = \@TreeDict dict, key, value ->
     if
         rbtContains dict.tree entry
     then
+        # Insert even if it already exists in order to update value
         @TreeDict { tree: rbtInsert dict.tree entry, size: dict.size }
     else
         @TreeDict { tree: rbtInsert dict.tree entry, size: (dict.size + 1) }
@@ -347,14 +364,6 @@ rbtMapCompare = \l, r ->
         (T _ _ lv _, T _ _ rv _) -> compare lv rv == LessThan
         (_, _) -> Bool.true
 
-rbtFromList : List a -> RBT a where a implements Sort
-rbtFromList = \xs ->
-    List.walk xs E rbtInsert
-
-rbtToList : RBT a -> List a where a implements Sort
-rbtToList = \t ->
-    rbtAppendToList (List.withCapacity 8) t
-
 rbtWalk : RBT a, state, (state, a -> state) -> state
 rbtWalk = \t, state, f ->
     when t is
@@ -385,13 +394,6 @@ rbtWalkUntilHelper = \t, state, f ->
                         Break _ -> vResult
                         Continue vState ->
                             rbtWalkUntilHelper r vState f
-
-rbtAppendToList : List a, RBT a -> List a
-rbtAppendToList = \xs, t ->
-    when t is
-        E -> xs
-        T _ l v r ->
-            rbtAppendToList xs l |> List.append v |> rbtAppendToList r
 
 rbtContains : RBT a, a -> Bool where a implements Sort
 rbtContains = \t, x ->
@@ -426,28 +428,6 @@ rbtMax = \t ->
         T _ _ v E -> Ok v
         T _ _ _ r -> rbtMax r
         E -> Err EmptyTree
-
-## Uses e to look up value v and applies function "f" to it. If f of v compares Equal to v, v is replaced by f of v.
-## This can be useful if Equal is an equivalence relation rather than structural equality.
-## The use case which motivated this function is that of a SortedMap backed by RedBlackTree. This method allows the
-## map to have an "adjust" method for updating the value of a key value pair
-##      adjust : OrderedMap k v, k, (v -> v) -> OrderedMap k v
-rbtAdjust : RBT a, a, (a -> a) -> RBT a where a implements Sort
-rbtAdjust = \t, e, f ->
-    when t is
-        E -> E
-        T c l v r ->
-            when compare e v is
-                LessThan -> rbtAdjust l e f
-                GreaterThan -> rbtAdjust r e f
-                Equal ->
-                    v2 = f v
-                    if
-                        compare v v2 == Equal
-                    then
-                        T c l v2 r
-                    else
-                        t
 
 rbtInsert : RBT a, a -> RBT a where a implements Sort
 rbtInsert = \rbt, e ->

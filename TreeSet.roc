@@ -193,18 +193,31 @@ max : TreeSet k -> Result k [EmptyTree]
 max = \@TreeSet set ->
     rbtMax set.tree
 
+# To get O(n) equality checking, I transform one of the sets to a list, then walkUntil the other
+# set with index as the state, compare element in the set with the element in the list at the index.
+# Since we stop if the elements are not equal, we know the final index only equals the size if the
+# sets are equal.
 equal : TreeSet k, TreeSet k -> Bool
 equal = \@TreeSet setA, @TreeSet setB ->
-    f = \_, elem ->
-        if
-            contains (@TreeSet setB) elem
-        then
-            Continue Bool.true
-        else
-            Break Bool.false
-    setA.size
-    == setB.size
-    && rbtWalkUntil setA.tree Bool.true f
+    if
+        setA.size == setB.size
+    then
+        bList = rbtToList setB.tree
+        f = \i, a ->
+            when List.get bList i is
+                Ok b ->
+                    if
+                        compare a b == Equal
+                    then
+                        Continue (i + 1)
+                    else
+                        Break i
+
+                _ -> crash "Did we not just check the length?"
+        endingIndex = rbtWalkUntil setA.tree 0 f
+        endingIndex == setB.size
+    else
+        Bool.false
 
 # ---- RBT ----
 #
@@ -215,6 +228,10 @@ RBT a : [
     E,
     T Color (RBT a) a (RBT a),
 ] where a implements Sort
+
+rbtToList : RBT a -> List a where a implements Sort
+rbtToList = \t ->
+    rbtAppendToList (List.withCapacity 8) t
 
 rbtWalk : RBT a, state, (state, a -> state) -> state
 rbtWalk = \t, state, f ->
