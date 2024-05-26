@@ -47,19 +47,17 @@ empty = \{} -> @TreeSet { tree: E, size: 0 }
 ## Creates a new `TreeSet` with a single value.
 single : k -> TreeSet k where k implements Sort
 single = \elem ->
-    @TreeSet { tree: rbtInsert E elem, size: 1 }
+    (Res _ t) = rbtInsert E elem
+    @TreeSet { tree: t, size: 1 }
 
 ## Insert a value into a `TreeSet`.
 ## Note, if the element is in the set, the returned set contains the element passed in rather than the original.
 ## This is only important when Equal is an equivalence relation rather than structural equality.
 insert : TreeSet k, k -> TreeSet k where k implements Sort
 insert = \@TreeSet set, elem ->
-    if
-        rbtContains set.tree elem
-    then
-        @TreeSet { tree: rbtInsert set.tree elem, size: set.size }
-    else
-        @TreeSet { tree: rbtInsert set.tree elem, size: (set.size + 1) }
+    when rbtInsert set.tree elem is
+        Res Unchanged t -> @TreeSet { tree: t, size: set.size }
+        Res _ t -> @TreeSet { tree: t, size: (set.size + 1) }
 
 ## Counts the number of values in a given `TreeSet`.
 len : TreeSet * -> U64
@@ -72,12 +70,9 @@ isEmpty = \@TreeSet set -> set.size == 0
 ## Removes the value from the given `TreeSet`.
 remove : TreeSet k, k -> TreeSet k
 remove = \@TreeSet set, elem ->
-    if
-        rbtContains set.tree elem
-    then
-        @TreeSet { tree: rbtDelete set.tree elem, size: (set.size - 1) }
-    else
-        @TreeSet set
+    when rbtDelete set.tree elem is
+        Res Unchanged _ -> @TreeSet set
+        Res _ t -> @TreeSet { tree: t, size: (set.size - 1) }
 
 ## Test if a value is in the `TreeSet`.
 contains : TreeSet k, k -> Bool
@@ -229,6 +224,9 @@ RBT a : [
     T Color (RBT a) a (RBT a),
 ] where a implements Sort
 
+RBTState : [Unchanged, Balanced, Unbalanced]
+RBTResult a : [Res RBTState (RBT a)]
+
 rbtToList : RBT a -> List a where a implements Sort
 rbtToList = \t ->
     rbtAppendToList (List.withCapacity 8) t
@@ -295,19 +293,26 @@ rbtMax = \t ->
         T _ _ _ r -> rbtMax r
         E -> Err EmptyTree
 
-rbtInsert : RBT a, a -> RBT a where a implements Sort
+rbtInsert : RBT a, a -> RBTResult a where a implements Sort
 rbtInsert = \rbt, e ->
     insertHelper rbt e |> blacken
 
-insertHelper : RBT a, a -> RBT a where a implements Sort
+insertHelper : RBT a, a -> RBTResult a where a implements Sort
 insertHelper = \t, e ->
     when t is
-        E -> T R E e E
+        E -> Res Unbalanced (T R E e E)
         T c a y b ->
             when compare e y is
-                LessThan -> leftInsertBalance c (insertHelper a e) y b
-                Equal -> T c a e b
-                GreaterThan -> rightInsertBalance c a y (insertHelper b e)
+                LessThan ->
+                    when insertHelper a e is
+                        Res Unchanged ap -> Res Unchanged (T c ap y b)
+                        Res _ ap -> Res Balanced (leftInsertBalance c ap y b)
+
+                Equal -> Res Unchanged (T c a e b)
+                GreaterThan ->
+                    when insertHelper b e is
+                        Res Unchanged bp -> Res Unchanged (T c a y bp)
+                        Res _ bp -> Res Balanced (rightInsertBalance c a y bp)
 
 rightInsertBalance : Color, RBT a, a, RBT a -> RBT a
 rightInsertBalance = \color, l, v, r ->
@@ -323,111 +328,109 @@ leftInsertBalance = \color, l, v, r ->
         (B, T R (T R a x b) y c, z, d) -> T R (T B a x b) y (T B c z d)
         (_, a, x, b) -> T color a x b
 
-blacken : RBT a -> RBT a
+blacken : RBTResult a -> RBTResult a
 blacken = \t ->
     when t is
-        E -> E
-        T _ l v r -> T B l v r
+        Res res E -> Res res E
+        Res res (T _ l v r) -> Res res (T B l v r)
 
-rbtDelete : RBT a, a -> RBT a where a implements Sort
+rbtDelete : RBT a, a -> RBTResult a where a implements Sort
 rbtDelete = \t, v ->
-    (tp, _) = deleteHelper t v
-    blacken tp
+    deleteHelper t v |> blacken
 
-deleteHelper : RBT a, a -> (RBT a, Bool) where a implements Sort
+deleteHelper : RBT a, a -> RBTResult a where a implements Sort
 deleteHelper = \t, v ->
     when t is
-        E -> (E, Bool.false)
+        E -> Res Unchanged E
         T c E w E ->
             when compare v w is
                 Equal ->
                     if
                         c == B
                     then
-                        (E, Bool.true)
+                        Res Unbalanced E
                     else
-                        (E, Bool.false)
+                        Res Balanced E
 
-                _ -> (t, Bool.false)
+                _ -> Res Balanced t
 
         T c E w r ->
             when compare v w is
-                LessThan -> (t, Bool.false)
+                LessThan -> Res Unchanged t
                 Equal ->
                     if
                         c == B
                     then
-                        (r, Bool.true)
+                        Res Unbalanced r
                     else
-                        (r, Bool.false)
+                        Res Balanced r
 
                 GreaterThan ->
-                    (rp, needsBal) = deleteHelper r v
-                    rightDeleteBalance (T c E w rp) needsBal
+                    when deleteHelper r v is
+                        Res Unbalanced rp -> rightDeleteBalance (T c E w rp)
+                        Res res rp -> Res res (T c E w rp)
 
         T c l w E ->
             when compare v w is
-                LessThan -> (t, Bool.false)
+                LessThan ->
+                    when deleteHelper l v is
+                        Res Unbalanced lp -> leftDeleteBalance (T c lp w E)
+                        Res res lp -> Res res (T c lp w E)
+
                 Equal ->
                     if
                         c == B
                     then
-                        (l, Bool.true)
+                        Res Unbalanced l
                     else
-                        (l, Bool.false)
+                        Res Balanced l
 
-                GreaterThan ->
-                    (lp, needsBal) = deleteHelper l v
-                    leftDeleteBalance (T c lp w E) needsBal
+                GreaterThan -> Res Unchanged t
 
         T c l w r ->
             when compare v w is
                 LessThan ->
-                    (lp, needsBal) = deleteHelper l v
-                    leftDeleteBalance (T c lp w r) needsBal
+                    when deleteHelper l v is
+                        Res Unbalanced lp -> leftDeleteBalance (T c lp w r)
+                        Res res lp -> Res res (T c lp w r)
 
                 Equal ->
-                    wpResult = rbtMin r
-                    when wpResult is
+                    when rbtMin r is
                         Ok wp ->
-                            (rp, needsBal) = deleteHelper r wp
-                            rightDeleteBalance (T c l wp rp) needsBal
+                            when deleteHelper r wp is
+                                Res Unbalanced rp -> rightDeleteBalance (T c l wp rp)
+                                Res res rp -> Res res (T c l wp rp)
 
                         Err EmptyTree -> crash "how could a not empty tree be empty?"
 
                 GreaterThan ->
-                    (rp, needsBal) = deleteHelper r v
-                    rightDeleteBalance (T c l w rp) needsBal
+                    when deleteHelper r v is
+                        Res Unbalanced rp -> rightDeleteBalance (T c l w rp)
+                        Res res rp -> Res res (T c l w rp)
 
-leftDeleteBalance : RBT a, Bool -> (RBT a, Bool)
-leftDeleteBalance = \t, needsBal ->
-    if needsBal then
-        when t is
-            T B (T R xl x xr) p r -> (T B (T B xl x xr) p r, Bool.false)
-            T B xt p (T R (T B lt g (T R rl rv rr)) s sr) -> (T B (T R (T B xt p lt) g (T B rl rv rr)) s sr, Bool.false)
-            T B xt p (T R (T B (T R ll lv lr) g rt) s sr) -> (T B (T R (T B xt p ll) lv (T B lr g rt)) s sr, Bool.false)
-            T B xt p (T R (T B lt g rt) s sr) -> (T B (T B xt p (T R lt g rt)) s sr, Bool.false)
-            T cp xt p (T B gl s (T R grr gr grl)) -> (T cp (T B xt p gl) s (T B grr gr grl), Bool.false)
-            T cp xt p (T B (T R gll gl glr) s gr) -> (T cp (T B xt p gll) gl (T B glr s gr), Bool.false)
-            T cp tx p (T B gl g gr) -> (T cp tx p (T R gl g gr), Bool.true)
-            _ -> crash "Red Black Tree violation. This should not be possible"
-    else
-        (t, needsBal)
+leftDeleteBalance : RBT a -> RBTResult a
+leftDeleteBalance = \t ->
+    when t is
+        T B (T R xl x xr) p r -> Res Balanced (T B (T B xl x xr) p r)
+        T B xt p (T R (T B lt g (T R rl rv rr)) s sr) -> Res Balanced (T B (T R (T B xt p lt) g (T B rl rv rr)) s sr)
+        T B xt p (T R (T B (T R ll lv lr) g rt) s sr) -> Res Balanced (T B (T R (T B xt p ll) lv (T B lr g rt)) s sr)
+        T B xt p (T R (T B lt g rt) s sr) -> Res Balanced (T B (T B xt p (T R lt g rt)) s sr)
+        T cp xt p (T B gl s (T R grr gr grl)) -> Res Balanced (T cp (T B xt p gl) s (T B grr gr grl))
+        T cp xt p (T B (T R gll gl glr) s gr) -> Res Balanced (T cp (T B xt p gll) gl (T B glr s gr))
+        T cp tx p (T B gl g gr) -> Res Unbalanced (T cp tx p (T R gl g gr))
+        _ -> crash "Red Black Tree violation. This should not be possible"
 
-rightDeleteBalance : RBT a, Bool -> (RBT a, Bool)
-rightDeleteBalance = \t, needsBal ->
-    if needsBal then
-        when t is
-            T B r p (T R xl x xr) -> (T B r p (T B xl x xr), Bool.false)
-            T B (T R sl s (T B (T R ll lv lr) g rt)) p xt -> (T B sl s (T R (T B ll lv lr) g (T B rt p xt)), Bool.false)
-            T B (T R sr s (T B rr g (T R lt rv rl))) p xt -> (T B sr s (T R (T B rr g lt) rv (T B rl p xt)), Bool.false)
-            T B (T R sl s (T B lt g rt)) p xt -> (T B sl s (T B (T R lt g rt) p xt), Bool.false)
-            T cp (T B (T R gll gl glr) s gr) p xt -> (T cp (T B gll gl glr) s (T B gr p xt), Bool.false)
-            T cp (T B gl s (T R grl gr glr)) p xt -> (T cp (T B gl s grl) gr (T B glr p xt), Bool.false)
-            T cp (T B gl g gr) p tx -> (T cp (T R gl g gr) p tx, Bool.true)
-            _ -> crash "Red Black Tree violation. This should never happen"
-    else
-        (t, needsBal)
+rightDeleteBalance : RBT a -> RBTResult a
+rightDeleteBalance = \t ->
+    when t is
+        T B r p (T R xl x xr) -> Res Balanced (T B r p (T B xl x xr))
+        T B (T R sl s (T B (T R ll lv lr) g rt)) p xt -> Res Balanced (T B sl s (T R (T B ll lv lr) g (T B rt p xt)))
+        T B (T R sr s (T B rr g (T R lt rv rl))) p xt -> Res Balanced (T B sr s (T R (T B rr g lt) rv (T B rl p xt)))
+        T B (T R sl s (T B lt g rt)) p xt -> Res Balanced (T B sl s (T B (T R lt g rt) p xt))
+        T cp (T B (T R gll gl glr) s gr) p xt -> Res Balanced (T cp (T B gll gl glr) s (T B gr p xt))
+        T cp (T B gl s (T R grl gr glr)) p xt -> Res Balanced (T cp (T B gl s grl) gr (T B glr p xt))
+        T cp (T B gl g gr) p tx -> Res Unbalanced (T cp (T R gl g gr) p tx)
+        _ -> crash "Red Black Tree violation. This should never happen"
 
 # ---- Test Code ----
 
