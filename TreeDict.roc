@@ -11,6 +11,7 @@ module [
     fromList,
     walk,
     walkUntil,
+    adjust,
     map,
     joinMap,
     keepIf,
@@ -185,6 +186,16 @@ walkUntil = \@TreeDict dict, state, f ->
             _ -> crash "How did a Key entry get inserted?"
     rbtWalkUntil dict.tree state f2
 
+## Updates the value at a key using the provided function. If the key is not in the dictionary,
+## the original dictionary is returned.
+## ```
+## expect
+##     f = \i -> i + 1
+##     initial = single (@TestNum 1) 2 |> insert (@TestNum 2) 3
+##     expected = single (@TestNum 1) 2 |> insert (@TestNum 2) 4
+##     actual = adjust initial (@TestNum 2) f
+##     expected == actual
+## ```
 adjust : TreeDict k v, k, (v -> v) -> TreeDict k v
 adjust = \@TreeDict dict, key, f ->
     entry = @Entry (Key key)
